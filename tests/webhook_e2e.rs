@@ -5,13 +5,13 @@ use axum::{
     http::{Request, StatusCode},
     routing::{post, put},
 };
-use std::sync::atomic::{AtomicU32, Ordering};
 use monzoboiii::{
     build_app,
     config::{AppConfig, Config, MonzoConfig, Tokens},
     monzo::MonzoClient,
 };
 use serde_json::json;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 use tower::ServiceExt;
@@ -189,12 +189,8 @@ async fn fifty_concurrent_transactions_all_handled() {
     }
 
     let monzo = Arc::new(
-        MonzoClient::new(
-            Tokens::default(),
-            PathBuf::from("/dev/null"),
-            test_config(),
-        )
-        .with_base_url(format!("http://127.0.0.1:{mock_port}")),
+        MonzoClient::new(Tokens::default(), PathBuf::from("/dev/null"), test_config())
+            .with_base_url(format!("http://127.0.0.1:{mock_port}")),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -243,7 +239,11 @@ async fn expired_token_is_refreshed_and_withdrawal_retried() {
                     let attempt = withdraw_attempts.fetch_add(1, Ordering::SeqCst);
                     async move {
                         // First call simulates an expired token; second should succeed.
-                        if attempt == 0 { StatusCode::UNAUTHORIZED } else { StatusCode::OK }
+                        if attempt == 0 {
+                            StatusCode::UNAUTHORIZED
+                        } else {
+                            StatusCode::OK
+                        }
                     }
                 }),
             )
@@ -283,8 +283,16 @@ async fn expired_token_is_refreshed_and_withdrawal_retried() {
         .unwrap();
 
     assert_eq!(res.status(), StatusCode::OK);
-    assert_eq!(withdraw_attempts.load(Ordering::SeqCst), 2, "expected initial attempt + one retry");
-    assert_eq!(refresh_calls.load(Ordering::SeqCst), 1, "expected exactly one token refresh");
+    assert_eq!(
+        withdraw_attempts.load(Ordering::SeqCst),
+        2,
+        "expected initial attempt + one retry"
+    );
+    assert_eq!(
+        refresh_calls.load(Ordering::SeqCst),
+        1,
+        "expected exactly one token refresh"
+    );
 }
 
 #[tokio::test]
