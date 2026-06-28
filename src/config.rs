@@ -18,10 +18,7 @@ pub struct AppConfig {
 pub struct MonzoConfig {
     pub client_id: String,
     pub client_secret: String,
-    pub pot_id: String,
     pub account_id: String,
-    pub withdrawal_amount_pence: u64,
-    pub trigger_types: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Default)]

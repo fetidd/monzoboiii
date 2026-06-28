@@ -6,7 +6,4 @@ redirect_uri = "http://localhost:3000/auth/callback"
 [monzo]
 client_id = "your_client_id"
 client_secret = "your_client_secret"
-pot_id = "pot_xxxxxxxxxxxxxxxxxxxx"
 account_id = "acc_xxxxxxxxxxxxxxxxxxxx"
-withdrawal_amount_pence = 500   # £5.00
-trigger_types = ["card_payment"]
