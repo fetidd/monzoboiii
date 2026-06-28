@@ -1,5 +1,5 @@
 use axum::{
-    Json,
+    body::Bytes,
     extract::{Path, State},
     http::StatusCode,
 };
@@ -26,9 +26,24 @@ pub struct TransactionData {
 pub async fn handle(
     Path(secret): Path<String>,
     State(monzo): State<Arc<MonzoClient>>,
-    Json(payload): Json<WebhookPayload>,
+    body: Bytes,
 ) -> StatusCode {
-    tracing::info!("Received {:?}", payload);
+    let raw: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Failed to parse webhook body as JSON: {e}");
+            return StatusCode::BAD_REQUEST;
+        }
+    };
+    tracing::info!("Webhook payload: {}", raw);
+
+    let payload: WebhookPayload = match serde_json::from_value(raw) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("Webhook body missing expected fields: {e}");
+            return StatusCode::BAD_REQUEST;
+        }
+    };
     if secret != monzo.config.app.secret {
         tracing::warn!("Webhook rejected: bad secret");
         return StatusCode::FORBIDDEN;
