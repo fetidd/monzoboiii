@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
         let monzo = monzo.clone();
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(3 * 3600)).await;
+                tokio::time::sleep(Duration::from_secs(300)).await;
                 if let Err(e) = monzo.refresh_pot_map().await {
                     tracing::error!("Pot map refresh failed: {e}");
                 }

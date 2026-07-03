@@ -97,24 +97,23 @@ impl MonzoClient {
             let map = self.pot_map.read().await;
             match map.get(category) {
                 Some(id) => id.clone(),
-                None => return Ok(false),
+                None => return Ok(false), // we dont have a pot to cover from
             }
         };
-        tracing::info!("would move {amount} due to {category}");
-        return Ok(false);
-        // let token = self.tokens.read().await.access_token.clone();
-        // match self.try_withdraw(&token, &pot_id, amount, dedupe_id).await {
-        //     Err(e) if e.to_string().contains("401") => {
-        //         tracing::info!("Access token expired, refreshing");
-        //         let new_token = self.refresh().await?;
-        //         self.try_withdraw(&new_token, &pot_id, amount, dedupe_id)
-        //             .await?;
-        //     }
-        //     other => {
-        //         other?;
-        //     }
-        // }
-        // Ok(true)
+        tracing::info!("Moving {amount} to cover {category} transaction");
+        let token = self.tokens.read().await.access_token.clone();
+        match self.try_withdraw(&token, &pot_id, amount, dedupe_id).await {
+            Err(e) if e.to_string().contains("401") => {
+                tracing::info!("Access token expired, refreshing");
+                let new_token = self.refresh().await?;
+                self.try_withdraw(&new_token, &pot_id, amount, dedupe_id)
+                    .await?;
+            }
+            other => {
+                other?;
+            }
+        }
+        Ok(true)
     }
 
     async fn try_withdraw(

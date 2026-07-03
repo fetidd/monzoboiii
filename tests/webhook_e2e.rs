@@ -88,6 +88,63 @@ async fn build_test_app(mock_url: String) -> axum::Router {
     build_app(monzo)
 }
 
+/// Builds a `TransactionData` JSON object populated with every field the
+/// webhook handler's strict deserialization requires, defaulted to a
+/// Mastercard transaction eligible for pot cover. Fields in `extra` are
+/// merged on top, overriding any default with the same key.
+fn transaction_data(extra: serde_json::Value) -> serde_json::Value {
+    let mut data = json!({
+        "id": "tx_001",
+        "account_id": "acc_123",
+        "amount": -500,
+        "amount_is_pending": false,
+        "atm_fees_detailed": null,
+        "attachments": null,
+        "can_add_to_tab": false,
+        "can_be_excluded_from_breakdown": false,
+        "can_be_made_subscription": false,
+        "can_match_transactions_in_categorization": false,
+        "can_split_the_bill": false,
+        "categories": null,
+        "category": "eating_out",
+        "counterparty": {},
+        "created": "2026-01-01T12:00:00.000Z",
+        "currency": "GBP",
+        "dedupe_id": "dedupe_001",
+        "description": "Test transaction",
+        "fees": {},
+        "include_in_spending": true,
+        "international": null,
+        "is_load": false,
+        "labels": null,
+        "local_amount": -500,
+        "local_currency": "GBP",
+        "merchant": null,
+        "merchant_feedback_uri": "",
+        "metadata": {
+            "eligible_for_pot_cover": "true",
+            "ledger_committed_timestamp_earliest": "2026-01-01T12:00:00.000Z",
+            "ledger_committed_timestamp_latest": "2026-01-01T12:00:00.000Z",
+            "ledger_insertion_id": "entryset_001"
+        },
+        "notes": "",
+        "originator": false,
+        "parent_account_id": "acc_123",
+        "scheme": "mastercard",
+        "settled": "",
+        "updated": "2026-01-01T12:00:00.000Z",
+        "user_id": "user_001"
+    });
+
+    if let (Some(data_obj), Some(extra_obj)) = (data.as_object_mut(), extra.as_object()) {
+        for (key, value) in extra_obj {
+            data_obj.insert(key.clone(), value.clone());
+        }
+    }
+
+    data
+}
+
 fn webhook_request(secret: &str, body: serde_json::Value) -> Request<Body> {
     Request::builder()
         .method("POST")
@@ -107,7 +164,7 @@ async fn happy_path_triggers_pot_withdrawal() {
             "test_secret",
             json!({
                 "type": "transaction.created",
-                "data": {"id": "tx_001", "account_id": "acc_123", "category": "eating_out", "amount": -500}
+                "data": transaction_data(json!({}))
             }),
         ))
         .await
@@ -130,7 +187,7 @@ async fn bad_secret_returns_forbidden_without_withdrawal() {
             "wrong_secret",
             json!({
                 "type": "transaction.created",
-                "data": {"id": "tx_001", "account_id": "acc_123", "category": "groceries", "amount": -500}
+                "data": transaction_data(json!({"category": "groceries"}))
             }),
         ))
         .await
@@ -150,7 +207,7 @@ async fn wrong_event_type_returns_ok_without_withdrawal() {
             "test_secret",
             json!({
                 "type": "transaction.updated",
-                "data": {"id": "tx_001", "account_id": "acc_123", "category": "groceries", "amount": -500}
+                "data": transaction_data(json!({"category": "groceries"}))
             }),
         ))
         .await
@@ -170,7 +227,7 @@ async fn wrong_account_id_returns_forbidden_without_withdrawal() {
             "test_secret",
             json!({
                 "type": "transaction.created",
-                "data": {"id": "tx_001", "account_id": "acc_other", "category": "groceries", "amount": -500}
+                "data": transaction_data(json!({"account_id": "acc_other", "category": "groceries"}))
             }),
         ))
         .await
@@ -191,7 +248,7 @@ async fn no_matching_pot_returns_ok_without_withdrawal() {
             "test_secret",
             json!({
                 "type": "transaction.created",
-                "data": {"id": "tx_001", "account_id": "acc_123", "category": "bad_category", "amount": -300}
+                "data": transaction_data(json!({"category": "bad_category", "amount": -300}))
             }),
         ))
         .await
@@ -264,7 +321,7 @@ async fn fifty_concurrent_transactions_all_handled() {
                 .post(format!("http://127.0.0.1:{port}/webhook/monzo/test_secret"))
                 .json(&json!({
                     "type": "transaction.created",
-                    "data": {"id": format!("tx_{i:03}"), "account_id": "acc_123", "category": "groceries", "amount": -100}
+                    "data": transaction_data(json!({"id": format!("tx_{i:03}"), "category": "groceries", "amount": -100}))
                 }))
                 .send()
                 .await
@@ -342,7 +399,7 @@ async fn expired_token_is_refreshed_and_withdrawal_retried() {
             "test_secret",
             json!({
                 "type": "transaction.created",
-                "data": {"id": "tx_001", "account_id": "acc_123", "category": "groceries", "amount": -500}
+                "data": transaction_data(json!({"category": "groceries"}))
             }),
         ))
         .await
