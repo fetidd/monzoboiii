@@ -300,8 +300,11 @@ pub async fn handle(
     let category = &payload.data.category;
     let amount = payload.data.amount;
 
-    if let Some(eligible) = payload.data.metadata.eligible_for_pot_cover
-        && eligible == "true"
+    if payload
+        .data
+        .metadata
+        .eligible_for_pot_cover
+        .is_some_and(|eligible| eligible == "true")
         && payload.data.scheme == "mastercard"
         && amount < 0
     {
