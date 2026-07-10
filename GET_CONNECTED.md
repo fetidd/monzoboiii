@@ -23,7 +23,7 @@ cargo build --release
 This produces two binaries:
 
 - `target/release/monzoboiii` — the server
-- `target/release/diagnose` — a diagnostics tool that checks each part of the setup and tells you what to fix
+- `target/release/monzoctl` — a CLI with `diagnose` and `webhooks` commands for checking and managing the setup
 
 ---
 
@@ -118,7 +118,7 @@ http://YOUR_LAN_IP:3000/auth/reauth
 Run the diagnostics tool:
 
 ```bash
-./target/release/diagnose
+./target/release/monzoctl diagnose
 ```
 
 If the `account_id` placeholder in your config doesn't match your real account, you will see something like:
@@ -189,7 +189,7 @@ If you own a domain on Cloudflare, a named tunnel gives you a stable `https://mo
 Monzo must be told where to send transaction events. Run the diagnostics tool again and it will print the exact `curl` command with your token and account ID filled in:
 
 ```bash
-./target/release/diagnose
+./target/release/monzoctl diagnose
 ```
 
 You will see something like:
@@ -215,7 +215,7 @@ Replace `YOUR_PUBLIC_HOST` with the hostname from Step 8 and run the command.
 ## Step 10 — Verify everything
 
 ```bash
-./target/release/diagnose
+./target/release/monzoctl diagnose
 ```
 
 A fully working setup looks like this:
@@ -290,7 +290,7 @@ Re-authentication is the same as Step 5 — visit `/auth/reauth` in a browser. Y
 | Thing to check | How |
 |---|---|
 | Server logs | `journalctl -u monzoboiii -f` (if using systemd) |
-| Token validity | `./target/release/diagnose` |
+| Token validity | `./target/release/monzoctl diagnose` |
 | Pot map (updated every 3h) | Server logs show count on each refresh |
 | Webhook deliveries | Monzo developer portal → your client → Webhooks |
 | Delete a webhook | `curl -X DELETE https://api.monzo.com/webhooks/{id} -H 'Authorization: Bearer TOKEN'` |

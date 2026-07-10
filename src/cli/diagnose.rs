@@ -1,4 +1,4 @@
-use monzoboiii::config::{Config, Tokens};
+use crate::config::{Config, Tokens};
 use reqwest::Client;
 use std::path::Path;
 
@@ -22,8 +22,7 @@ const SPENDING_CATEGORIES: &[&str] = &[
     // "savings",
 ];
 
-#[tokio::main]
-async fn main() {
+pub async fn run() -> anyhow::Result<()> {
     println!("=== monzoboiii diagnostics ===\n");
 
     // --- Config ---
@@ -37,7 +36,7 @@ async fn main() {
             hint(&format!(
                 "Copy config.toml.example to {CONFIG_PATH} and fill it in"
             ));
-            return;
+            return Ok(());
         }
     };
 
@@ -50,7 +49,7 @@ async fn main() {
             config.app.port
         ));
         println!("\nCannot check the Monzo API without tokens. Authenticate first.");
-        return;
+        return Ok(());
     }
     ok("Tokens found");
 
@@ -65,7 +64,7 @@ async fn main() {
     {
         Err(e) => {
             fail(&format!("Cannot reach Monzo API: {e}"));
-            return;
+            return Ok(());
         }
         Ok(res) if res.status() == 401 => {
             fail("Auth token is invalid or expired");
@@ -73,14 +72,14 @@ async fn main() {
                 "Visit http://localhost:{}/auth/reauth to re-authenticate",
                 config.app.port
             ));
-            return;
+            return Ok(());
         }
         Ok(res) if !res.status().is_success() => {
             fail(&format!(
                 "Monzo API returned unexpected status {}",
                 res.status()
             ));
-            return;
+            return Ok(());
         }
         Ok(res) => {
             let body: serde_json::Value = res.json().await.unwrap_or_default();
@@ -134,7 +133,7 @@ async fn main() {
 
     if !accounts_ok {
         println!("\nFix account_id before checking pots and webhooks.");
-        return;
+        return Ok(());
     }
 
     // --- Pots ---
@@ -226,6 +225,7 @@ async fn main() {
     }
 
     println!("\nDiagnostics complete.");
+    Ok(())
 }
 
 fn ok(msg: &str) {
