@@ -1,10 +1,8 @@
-use crate::config::{Config, Tokens};
+use crate::cli::common::{self, BASE_URL, CONFIG_PATH};
+use crate::config::Config;
 use clap::{Args, Subcommand};
 use reqwest::Client;
 use std::path::Path;
-
-const CONFIG_PATH: &str = "/home/ben/.config/monzoboiii/config.toml";
-const TOKENS_PATH: &str = "tokens.toml";
 
 #[derive(Args)]
 pub struct WebhooksArgs {
@@ -42,22 +40,10 @@ pub async fn run(args: WebhooksArgs) -> anyhow::Result<()> {
     }
 }
 
-async fn load() -> anyhow::Result<(Config, Tokens, Client)> {
-    let config = Config::load(Path::new(CONFIG_PATH))?;
-    let tokens = Tokens::load(Path::new(TOKENS_PATH)).unwrap_or_default();
-    if tokens.access_token.is_empty() {
-        anyhow::bail!(
-            "Not authenticated — start the server and visit http://localhost:{}/auth/reauth",
-            config.app.port
-        );
-    }
-    Ok((config, tokens, Client::new()))
-}
-
 async fn cmd_list() -> anyhow::Result<()> {
-    let (config, tokens, http) = load().await?;
+    let (config, tokens, http) = common::load().await?;
     let res: serde_json::Value = http
-        .get("https://api.monzo.com/webhooks")
+        .get(format!("{BASE_URL}/webhooks"))
         .bearer_auth(&tokens.access_token)
         .query(&[("account_id", config.monzo.account_id.as_str())])
         .send()
@@ -80,14 +66,14 @@ async fn cmd_list() -> anyhow::Result<()> {
 }
 
 async fn cmd_create(base_url: &str) -> anyhow::Result<()> {
-    let (config, tokens, http) = load().await?;
+    let (config, tokens, http) = common::load().await?;
     let url = format!(
         "{}/webhook/monzo/{}",
         base_url.trim_end_matches('/'),
         config.app.secret,
     );
     let res: serde_json::Value = http
-        .post("https://api.monzo.com/webhooks")
+        .post(format!("{BASE_URL}/webhooks"))
         .bearer_auth(&tokens.access_token)
         .form(&[
             ("account_id", config.monzo.account_id.as_str()),
@@ -106,8 +92,8 @@ async fn cmd_create(base_url: &str) -> anyhow::Result<()> {
 }
 
 async fn cmd_delete(id: &str) -> anyhow::Result<()> {
-    let (_, tokens, http) = load().await?;
-    http.delete(format!("https://api.monzo.com/webhooks/{id}"))
+    let (_, tokens, http) = common::load().await?;
+    http.delete(format!("{BASE_URL}/webhooks/{id}"))
         .bearer_auth(&tokens.access_token)
         .send()
         .await?

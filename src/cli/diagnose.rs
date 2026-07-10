@@ -1,9 +1,7 @@
+use crate::cli::common::{CONFIG_PATH, TOKENS_PATH};
 use crate::config::{Config, Tokens};
 use reqwest::Client;
 use std::path::Path;
-
-const CONFIG_PATH: &str = "/home/ben/.config/monzoboiii/config.toml";
-const TOKENS_PATH: &str = "tokens.toml";
 
 const SPENDING_CATEGORIES: &[&str] = &[
     "general",

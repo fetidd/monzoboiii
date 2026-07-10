@@ -115,7 +115,7 @@ impl MonzoClient {
         }
         let _ = self
             .http
-            .put(format!("{}/feed", self.base_url))
+            .post(format!("{}/feed", self.base_url))
             .bearer_auth(token)
             .form(&[
                 ("account_id", self.config.monzo.account_id.as_str()),
