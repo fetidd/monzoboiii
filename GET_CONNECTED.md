@@ -243,37 +243,7 @@ INFO monzoboiii: Pot withdrawal triggered for category 'groceries' tx tx_0000AbC
 
 ## Appendix A — Running as a systemd service
 
-To have monzoboiii start automatically on boot and restart if it crashes:
-
-```bash
-sudo nano /etc/systemd/system/monzoboiii.service
-```
-
-```ini
-[Unit]
-Description=monzoboiii Monzo pot manager
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=ben
-WorkingDirectory=/home/ben/monzoboiii
-ExecStart=/home/ben/monzoboiii/target/release/monzoboiii
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now monzoboiii
-sudo systemctl status monzoboiii
-```
-
-`WorkingDirectory` must be the project root so that `tokens.toml` is read and written in the right place.
+The Pi doesn't hold the source checkout or a Rust toolchain — it only has compiled binaries and `tokens.toml` in `/home/ben/monzoboiii-run/`. The systemd unit (`deploy/monzoboiii.service` in this repo) is built, deployed, and managed remotely from your dev machine. See **[DEV_WORKFLOW.md](DEV_WORKFLOW.md)** for the full cross-compile/deploy/tunnel setup — the short version is `just reload`.
 
 ---
 

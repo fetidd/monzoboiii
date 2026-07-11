@@ -64,15 +64,25 @@ impl MonzoClient {
 
     pub async fn refresh_pot_map(&self) -> anyhow::Result<()> {
         let token = self.tokens.read().await.access_token.clone();
-        let res: PotsResponse = self
+        let res = self
             .http
             .get(format!("{}/pots", self.base_url))
             .bearer_auth(&token)
             .query(&[("current_account_id", self.config.monzo.account_id.as_str())])
             .send()
-            .await?
-            .json()
             .await?;
+
+        if res.status() == 401 {
+            anyhow::bail!(
+                "401 Unauthorized fetching /pots — access token expired or revoked, re-auth at /auth/reauth"
+            );
+        }
+        let res: PotsResponse = res
+            .error_for_status()
+            .context("Monzo /pots request failed")?
+            .json()
+            .await
+            .context("failed to parse /pots response body")?;
 
         let mut map = HashMap::new();
         for pot in res.pots {

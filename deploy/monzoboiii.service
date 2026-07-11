@@ -1,0 +1,15 @@
+[Unit]
+Description=monzoboiii Monzo pot manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ben
+WorkingDirectory=/home/ben/monzoboiii-run
+ExecStart=/home/ben/monzoboiii-run/bin/monzoboiii
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

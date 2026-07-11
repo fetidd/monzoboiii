@@ -1,4 +1,0 @@
-- implement a 'watch' mode that logs full webhook payloads but makes no calls to move any funds
-- after a few days we can hopefully see a pattern in creates and updates
-- then tighten up when we actually want to move funds
-	- only when a create is -ve
