@@ -3,6 +3,7 @@ use axum::{
     body::Body,
     extract::{Form, Path},
     http::{Request, StatusCode},
+    response::IntoResponse,
     routing::{get, post, put},
 };
 use monzoboiii::{
@@ -68,7 +69,8 @@ async fn spawn_mock_monzo() -> (String, Arc<Mutex<Vec<(String, u64)>>>) {
                     }
                 },
             ),
-        );
+        )
+        .route("/feed", post(|| async { StatusCode::OK }));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -294,7 +296,8 @@ async fn fifty_concurrent_transactions_all_handled() {
                         }
                     },
                 ),
-            );
+            )
+            .route("/feed", post(|| async { StatusCode::OK }));
         tokio::spawn(async move {
             axum::serve(mock_listener, mock_app).await.unwrap();
         });
@@ -381,7 +384,8 @@ async fn expired_token_is_refreshed_and_withdrawal_retried() {
                         }))
                     }
                 }),
-            );
+            )
+            .route("/feed", post(|| async { StatusCode::OK }));
         tokio::spawn(async move {
             axum::serve(mock_listener, mock_app).await.unwrap();
         });
@@ -416,4 +420,356 @@ async fn expired_token_is_refreshed_and_withdrawal_retried() {
         1,
         "expected exactly one token refresh"
     );
+}
+
+#[tokio::test]
+async fn non_mastercard_scheme_returns_ok_without_withdrawal() {
+    let (mock_url, calls) = spawn_mock_monzo().await;
+    let app = build_test_app(mock_url).await;
+
+    // "eating_out" maps to an active pot in the mock, so if the scheme gate
+    // were broken this would trigger a real withdrawal call.
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": transaction_data(json!({
+                    "category": "eating_out",
+                    "scheme": "uk_retail_pot"
+                }))
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(calls.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn not_eligible_for_pot_cover_returns_ok_without_withdrawal() {
+    let (mock_url, calls) = spawn_mock_monzo().await;
+    let app = build_test_app(mock_url).await;
+
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": transaction_data(json!({
+                    "category": "eating_out",
+                    "metadata": {"eligible_for_pot_cover": "false"}
+                }))
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(calls.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn eligible_for_pot_cover_missing_returns_ok_without_withdrawal() {
+    let (mock_url, calls) = spawn_mock_monzo().await;
+    let app = build_test_app(mock_url).await;
+
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": transaction_data(json!({
+                    "category": "eating_out",
+                    "metadata": {}
+                }))
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(calls.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn positive_amount_refund_returns_ok_without_withdrawal() {
+    let (mock_url, calls) = spawn_mock_monzo().await;
+    let app = build_test_app(mock_url).await;
+
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": transaction_data(json!({
+                    "category": "eating_out",
+                    "amount": 500,
+                    "local_amount": 500
+                }))
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(calls.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn deleted_pot_is_excluded_from_withdrawal() {
+    let mock_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_port = mock_listener.local_addr().unwrap().port();
+    let mock_app = Router::new().route(
+        "/pots",
+        get(|| async {
+            Json(json!({
+                "pots": [{"id": "pot_999", "name": "groceries", "deleted": true}]
+            }))
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(mock_listener, mock_app).await.unwrap();
+    });
+
+    let monzo = Arc::new(
+        MonzoClient::new(Tokens::default(), PathBuf::from("/dev/null"), test_config())
+            .with_base_url(format!("http://127.0.0.1:{mock_port}")),
+    );
+    monzo.refresh_pot_map().await.unwrap();
+    let app = build_app(monzo);
+
+    // No /pots/{id}/withdraw route exists on this mock, so if the deleted
+    // pot leaked into the map, the withdrawal attempt would 404 and this
+    // would come back as a 500 instead of 200.
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": transaction_data(json!({"category": "groceries"}))
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn malformed_json_body_returns_bad_request() {
+    let (mock_url, _calls) = spawn_mock_monzo().await;
+    let app = build_test_app(mock_url).await;
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/webhook/monzo/test_secret")
+                .header("content-type", "application/json")
+                .body(Body::from("not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_missing_required_field_returns_bad_request() {
+    let (mock_url, _calls) = spawn_mock_monzo().await;
+    let app = build_test_app(mock_url).await;
+
+    let mut data = transaction_data(json!({}));
+    data.as_object_mut().unwrap().remove("scheme");
+
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": data
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pot_map_refresh_retries_after_401() {
+    let pots_attempts = Arc::new(AtomicU32::new(0));
+    let refresh_calls = Arc::new(AtomicU32::new(0));
+
+    let mock_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_port = mock_listener.local_addr().unwrap().port();
+    {
+        let pots_attempts = pots_attempts.clone();
+        let refresh_calls = refresh_calls.clone();
+        let mock_app = Router::new()
+            .route(
+                "/pots",
+                get(move || {
+                    let attempt = pots_attempts.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        // First call simulates an expired access token; the
+                        // retry (after refresh) should succeed.
+                        if attempt == 0 {
+                            StatusCode::UNAUTHORIZED.into_response()
+                        } else {
+                            Json(json!({
+                                "pots": [{"id": "pot_123", "name": "groceries", "deleted": false}]
+                            }))
+                            .into_response()
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/oauth2/token",
+                post(move || {
+                    let refresh_calls = refresh_calls.clone();
+                    async move {
+                        refresh_calls.fetch_add(1, Ordering::SeqCst);
+                        Json(json!({
+                            "access_token": "refreshed_token",
+                            "refresh_token": "new_refresh_token"
+                        }))
+                    }
+                }),
+            );
+        tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app).await.unwrap();
+        });
+    }
+
+    let monzo = Arc::new(
+        MonzoClient::new(Tokens::default(), PathBuf::from("/dev/null"), test_config())
+            .with_base_url(format!("http://127.0.0.1:{mock_port}")),
+    );
+
+    monzo
+        .refresh_pot_map()
+        .await
+        .expect("pot map refresh should recover after refreshing the token");
+
+    assert_eq!(
+        pots_attempts.load(Ordering::SeqCst),
+        2,
+        "expected initial 401 + retry"
+    );
+    assert_eq!(
+        refresh_calls.load(Ordering::SeqCst),
+        1,
+        "expected exactly one token refresh"
+    );
+}
+
+#[tokio::test]
+async fn withdraw_fails_with_non_auth_error_returns_server_error() {
+    let mock_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_port = mock_listener.local_addr().unwrap().port();
+    let mock_app = Router::new()
+        .route(
+            "/pots",
+            get(|| async {
+                Json(json!({
+                    "pots": [{"id": "pot_123", "name": "groceries", "deleted": false}]
+                }))
+            }),
+        )
+        .route(
+            "/pots/{pot_id}/withdraw",
+            put(|| async {
+                // Simulates a genuine Monzo-side rejection, e.g. insufficient pot balance.
+                StatusCode::UNPROCESSABLE_ENTITY
+            }),
+        );
+    tokio::spawn(async move {
+        axum::serve(mock_listener, mock_app).await.unwrap();
+    });
+
+    let monzo = Arc::new(
+        MonzoClient::new(Tokens::default(), PathBuf::from("/dev/null"), test_config())
+            .with_base_url(format!("http://127.0.0.1:{mock_port}")),
+    );
+    monzo.refresh_pot_map().await.unwrap();
+    let app = build_app(monzo);
+
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": transaction_data(json!({"category": "groceries"}))
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn feed_post_failure_after_successful_withdrawal_still_returns_ok() {
+    let withdraw_calls: Arc<Mutex<Vec<(String, u64)>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let mock_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_port = mock_listener.local_addr().unwrap().port();
+    {
+        let withdraw_calls = withdraw_calls.clone();
+        let mock_app = Router::new()
+            .route(
+                "/pots",
+                get(|| async {
+                    Json(json!({
+                        "pots": [{"id": "pot_123", "name": "groceries", "deleted": false}]
+                    }))
+                }),
+            )
+            .route(
+                "/pots/{pot_id}/withdraw",
+                put(
+                    move |Path(pot_id): Path<String>, Form(form): Form<WithdrawForm>| {
+                        let withdraw_calls = withdraw_calls.clone();
+                        async move {
+                            withdraw_calls.lock().await.push((pot_id, form.amount));
+                            StatusCode::OK
+                        }
+                    },
+                ),
+            );
+        // Deliberately no /feed route: it 404s, so error_for_status() there
+        // fails — but that failure must only be logged, not surfaced.
+        tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app).await.unwrap();
+        });
+    }
+
+    let monzo = Arc::new(
+        MonzoClient::new(Tokens::default(), PathBuf::from("/dev/null"), test_config())
+            .with_base_url(format!("http://127.0.0.1:{mock_port}")),
+    );
+    monzo.refresh_pot_map().await.unwrap();
+    let app = build_app(monzo);
+
+    let res = app
+        .oneshot(webhook_request(
+            "test_secret",
+            json!({
+                "type": "transaction.created",
+                "data": transaction_data(json!({"category": "groceries"}))
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        withdraw_calls.lock().await.as_slice(),
+        [("pot_123".to_string(), 500u64)]
+    );
+    assert_eq!(res.status(), StatusCode::OK);
 }

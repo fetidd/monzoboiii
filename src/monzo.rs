@@ -64,25 +64,14 @@ impl MonzoClient {
 
     pub async fn refresh_pot_map(&self) -> anyhow::Result<()> {
         let token = self.tokens.read().await.access_token.clone();
-        let res = self
-            .http
-            .get(format!("{}/pots", self.base_url))
-            .bearer_auth(&token)
-            .query(&[("current_account_id", self.config.monzo.account_id.as_str())])
-            .send()
-            .await?;
-
-        if res.status() == 401 {
-            anyhow::bail!(
-                "401 Unauthorized fetching /pots — access token expired or revoked, re-auth at /auth/reauth"
-            );
-        }
-        let res: PotsResponse = res
-            .error_for_status()
-            .context("Monzo /pots request failed")?
-            .json()
-            .await
-            .context("failed to parse /pots response body")?;
+        let res = match self.fetch_pots(&token).await {
+            Err(e) if e.to_string().contains("401") => {
+                tracing::info!("Access token expired, refreshing");
+                let new_token = self.refresh().await?;
+                self.fetch_pots(&new_token).await?
+            }
+            other => other?,
+        };
 
         let mut map = HashMap::new();
         for pot in res.pots {
@@ -95,6 +84,25 @@ impl MonzoClient {
         *self.pot_map.write().await = map;
         tracing::info!("Pot map refreshed: {count} spending pots found");
         Ok(())
+    }
+
+    async fn fetch_pots(&self, token: &str) -> anyhow::Result<PotsResponse> {
+        let res = self
+            .http
+            .get(format!("{}/pots", self.base_url))
+            .bearer_auth(token)
+            .query(&[("current_account_id", self.config.monzo.account_id.as_str())])
+            .send()
+            .await?;
+
+        if res.status() == 401 {
+            anyhow::bail!("401 Unauthorized fetching /pots");
+        }
+        res.error_for_status()
+            .context("Monzo /pots request failed")?
+            .json()
+            .await
+            .context("failed to parse /pots response body")
     }
 
     pub async fn withdraw_for_category(
@@ -123,7 +131,7 @@ impl MonzoClient {
                 other?;
             }
         }
-        let _ = self
+        let feed_result = self
             .http
             .post(format!("{}/feed", self.base_url))
             .bearer_auth(token)
@@ -137,7 +145,14 @@ impl MonzoClient {
                 ),
             ])
             .send()
-            .await?;
+            .await
+            .and_then(|res| res.error_for_status());
+        if let Err(e) = feed_result {
+            // The withdrawal above already succeeded — don't fail the whole
+            // webhook (and trigger a Monzo retry) just because the feed
+            // notification didn't land.
+            tracing::warn!("Monzo /feed request failed after successful withdrawal: {e}");
+        }
         Ok(true)
     }
 
