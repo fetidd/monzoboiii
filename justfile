@@ -26,7 +26,7 @@ reload: push-pi
 
 # Run diagnostics against the Pi's live instance
 diagnose-pi:
-    ssh {{pi_host}} '{{pi_run_dir}}/bin/monzoctl diagnose'
+    ssh {{pi_host}} 'cd {{pi_run_dir}} && bin/monzoctl diagnose'
 
 # Tail the live service logs on the Pi
 logs-pi:
